@@ -18,7 +18,7 @@ use React\Promise\PromiseInterface;
  */
 class GitPreservingInstaller extends LibraryInstaller
 {
-    private const SUPPORTED_TYPES = ['drupal-module', 'drupal-theme', 'drupal-profile'];
+    private const SUPPORTED_TYPES = ['drupal-module', 'drupal-theme', 'drupal-profile', 'drupal-core'];
 
     /**
      * Only handle Drupal module/theme/profile types.
@@ -65,6 +65,10 @@ class GitPreservingInstaller extends LibraryInstaller
             }
         }
 
+        if ($type === 'drupal-core') {
+            return 'core';
+        }
+
         throw new \RuntimeException("No installer-paths entry found for package type '$type'. Ensure your Composer configuration defines installer-paths.");
     }
 
@@ -74,7 +78,16 @@ class GitPreservingInstaller extends LibraryInstaller
     private function hasGitCheckout(PackageInterface $package): bool
     {
         $installPath = $this->getInstallPath($package);
-        return is_dir($installPath . '/.git');
+        if (is_dir($installPath . '/.git')) {
+            return true;
+        }
+        // drupal-core lives inside the project's own git repo rather than a
+        // separate checkout, so .git is in the parent. Treat the directory as
+        // preserved whenever it exists.
+        if ($package->getType() === 'drupal-core') {
+            return is_dir($installPath);
+        }
+        return false;
     }
 
     /**
