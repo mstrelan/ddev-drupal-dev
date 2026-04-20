@@ -7,7 +7,9 @@
 # you're inside a DDEV project directory, and fall back to the host binary
 # otherwise.
 
-_in_ddev_project() {
+# Double-underscore prefix avoids zsh compinit treating these as completion
+# function autoload stubs (single _ prefix is the completion-function convention).
+__ddev_in_project() {
   local dir="$PWD"
   while [ "$dir" != "/" ]; do
     [ -f "$dir/.ddev/config.yaml" ] && return 0
@@ -16,15 +18,15 @@ _in_ddev_project() {
   return 1
 }
 
-_ddev_delegate() {
-  if _in_ddev_project; then
+__ddev_delegate() {
+  if __ddev_in_project; then
     ddev "$@"
   else
     command "$@"
   fi
 }
 
-function composer { _ddev_delegate composer "$@"; }
-function drush    { _ddev_delegate drush "$@"; }
-function php      { _ddev_delegate php "$@"; }
-function phpunit  { _ddev_delegate phpunit "$@"; }
+function composer { __ddev_delegate composer "$@"; }
+function drush    { __ddev_delegate drush "$@"; }
+function php      { __ddev_delegate php "$@"; }
+function phpunit  { __ddev_delegate phpunit "$@"; }
