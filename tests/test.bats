@@ -271,3 +271,81 @@ teardown() {
   assert_file_not_exists "${TESTDIR}/.ddev/commands/host/remove-module"
   assert_file_not_exists "${TESTDIR}/.ddev/commands/host/update-module"
 }
+
+@test "pin-core-lock" {
+  set -eu -o pipefail
+  addon_setup
+
+  # Flag off (default): no pinning hint on a fresh solve.
+  rm -f "${TESTDIR}/composer.local.lock"
+  run ddev composer install
+  assert_success
+  refute_output --partial "Core lock pinning active"
+
+  # Enable the flag.
+  run ddev composer config --json extra.drupal-dev '{"pin-core-lock":true}'
+  assert_success
+
+  # Pinning applies during a fresh solve and a shared package matches core's lock.
+  rm -f "${TESTDIR}/composer.local.lock"
+  run ddev composer install
+  assert_success
+  assert_output --partial "Core lock pinning active"
+  core_version=$(python3 -c "import json; d=json.load(open('${TESTDIR}/composer.lock')); print(next(p['version'] for p in d['packages'] if p['name']=='symfony/error-handler'))")
+  overlay_version=$(python3 -c "import json; d=json.load(open('${TESTDIR}/composer.local.lock')); print(next(p['version'] for p in d['packages'] if p['name']=='symfony/error-handler'))")
+  [ "${core_version}" = "${overlay_version}" ]
+
+  # Direct conflict: overlay require incompatible with the locked version
+  # triggers the pre-check error and aborts before the solver runs.
+  python3 - <<'PY'
+import json, os
+path = os.path.join(os.environ['TESTDIR'], 'composer.local.json')
+data = json.load(open(path))
+data.setdefault('require', {})['guzzlehttp/promises'] = '^1'
+json.dump(data, open(path, 'w'), indent=4)
+PY
+  rm -f "${TESTDIR}/composer.local.lock"
+  run ddev composer install
+  assert_failure
+  assert_output --partial "Core lock pinning conflict"
+
+  # Revert the conflict so the next assertions exercise unrelated paths.
+  python3 - <<'PY'
+import json, os
+path = os.path.join(os.environ['TESTDIR'], 'composer.local.json')
+data = json.load(open(path))
+data.get('require', {}).pop('guzzlehttp/promises', None)
+json.dump(data, open(path, 'w'), indent=4)
+PY
+
+  # Missing core lock with pinning enabled fails loudly instead of silently
+  # falling back to a fresh solve.
+  mv "${TESTDIR}/composer.lock" "${TESTDIR}/composer.lock.bak"
+  rm -f "${TESTDIR}/composer.local.lock"
+  run ddev composer install
+  assert_failure
+  assert_output --partial "Core lock pinning is enabled"
+  mv "${TESTDIR}/composer.lock.bak" "${TESTDIR}/composer.lock"
+
+  # Dev refs (when present in core's lock) are pinned to the locked SHA so
+  # the overlay's composer.local.lock records the same source reference.
+  # Match Composer's notion of dev: dev- prefix or -dev suffix on the version.
+  dev_package=$(python3 - <<'PY'
+import json, os
+d = json.load(open(os.path.join(os.environ['TESTDIR'], 'composer.lock')))
+for p in d.get('packages', []) + d.get('packages-dev', []):
+    v = p.get('version', '')
+    if (v.startswith('dev-') or v.endswith('-dev')) and p.get('source', {}).get('reference'):
+        print(p['name'])
+        break
+PY
+)
+  if [ -n "${dev_package}" ]; then
+    rm -f "${TESTDIR}/composer.local.lock"
+    run ddev composer install
+    assert_success
+    core_sha=$(python3 -c "import json, os; d=json.load(open(os.path.join(os.environ['TESTDIR'],'composer.lock'))); pkg=next(p for p in d['packages']+d.get('packages-dev',[]) if p['name']=='${dev_package}'); print(pkg['source']['reference'])")
+    overlay_sha=$(python3 -c "import json, os; d=json.load(open(os.path.join(os.environ['TESTDIR'],'composer.local.lock'))); pkg=next(p for p in d['packages']+d.get('packages-dev',[]) if p['name']=='${dev_package}'); print(pkg['source']['reference'])")
+    [ "${core_sha}" = "${overlay_sha}" ]
+  fi
+}
