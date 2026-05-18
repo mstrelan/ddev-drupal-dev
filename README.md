@@ -18,7 +18,7 @@ Clone Drupal core and configure DDEV to use it as the project root:
 ```bash
 git clone https://git.drupalcode.org/project/drupal.git drupal-dev
 cd drupal-dev
-ddev config --project-type=drupal12
+ddev config --project-type=drupal
 ddev start
 ```
 
