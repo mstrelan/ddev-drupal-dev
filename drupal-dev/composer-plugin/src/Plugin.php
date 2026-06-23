@@ -29,18 +29,25 @@ class Plugin implements PluginInterface, EventSubscriberInterface
         $this->composer = $composer;
         $this->io = $io;
 
-        // Seed installer-paths from core's composer.json into the root package
-        // extra so the fallback in getInstallPath() works before the merge
-        // plugin has had a chance to merge core's extra.
-        $rootExtra = $composer->getPackage()->getExtra();
-        if (empty($rootExtra['installer-paths'])) {
-            $coreFile = getcwd() . '/composer.json';
-            if (file_exists($coreFile)) {
-                $coreConfig = json_decode(file_get_contents($coreFile), true);
-                if (!empty($coreConfig['extra']['installer-paths'])) {
-                    $rootExtra['installer-paths'] = $coreConfig['extra']['installer-paths'];
-                    $composer->getPackage()->setExtra($rootExtra);
-                }
+        // Seed installer-paths and config.platform from core's composer.json
+        // into the root package so the fallback in getInstallPath() works
+        // before the merge plugin has had a chance to merge core's extra, and
+        // so PHPStan sees the correct platform PHP version.
+        $coreFile = getcwd() . '/composer.json';
+        if (file_exists($coreFile)) {
+            $coreConfig = json_decode(file_get_contents($coreFile), true);
+
+            $rootExtra = $composer->getPackage()->getExtra();
+            if (empty($rootExtra['installer-paths']) && !empty($coreConfig['extra']['installer-paths'])) {
+                $rootExtra['installer-paths'] = $coreConfig['extra']['installer-paths'];
+                $composer->getPackage()->setExtra($rootExtra);
+            }
+
+            if (!empty($coreConfig['config']['platform'])) {
+                $composer->getConfig()->merge(
+                    ['config' => ['platform' => $coreConfig['config']['platform']]],
+                    $coreFile
+                );
             }
         }
 
