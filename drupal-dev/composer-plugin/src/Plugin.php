@@ -33,6 +33,11 @@ class Plugin implements PluginInterface, EventSubscriberInterface
         // into the root package so the fallback in getInstallPath() works
         // before the merge plugin has had a chance to merge core's extra, and
         // so PHPStan sees the correct platform PHP version.
+        //
+        // config.platform must also be written to the root composer file on
+        // disk because PHPStan reads it directly from that file (via the
+        // $COMPOSER env var) in a separate process — the in-memory Config
+        // merge is not visible to it.
         $coreFile = getcwd() . '/composer.json';
         if (file_exists($coreFile)) {
             $coreConfig = json_decode(file_get_contents($coreFile), true);
@@ -48,6 +53,7 @@ class Plugin implements PluginInterface, EventSubscriberInterface
                     ['config' => ['platform' => $coreConfig['config']['platform']]],
                     $coreFile
                 );
+                $this->syncPlatformToRootFile($coreConfig['config']['platform']);
             }
         }
 
@@ -125,6 +131,44 @@ class Plugin implements PluginInterface, EventSubscriberInterface
     {
         $installer = new GitPreservingInstaller($this->io, $this->composer);
         $this->composer->getInstallationManager()->addInstaller($installer);
+    }
+
+    /**
+     * Write config.platform into the root composer file (e.g. composer.local.json)
+     * so that tools like PHPStan, which read that file directly in a separate
+     * process, pick up the correct platform PHP version.
+     *
+     * Only writes when the value differs from what is already on disk to avoid
+     * unnecessary file churn.
+     *
+     * @param array<string, string> $platform
+     */
+    private function syncPlatformToRootFile(array $platform): void
+    {
+        $envComposer = getenv('COMPOSER');
+        $rootFileName = is_string($envComposer) && $envComposer !== '' ? basename($envComposer) : 'composer.json';
+        $rootFile = getcwd() . '/' . $rootFileName;
+
+        // Only act when we're actually running under an overlay root file that
+        // is separate from the core composer.json we just read.
+        if ($rootFile === getcwd() . '/composer.json' || !file_exists($rootFile)) {
+            return;
+        }
+
+        $rootData = json_decode(file_get_contents($rootFile), true);
+        if (!is_array($rootData)) {
+            return;
+        }
+
+        if (($rootData['config']['platform'] ?? null) === $platform) {
+            return;
+        }
+
+        $rootData['config']['platform'] = $platform;
+        file_put_contents(
+            $rootFile,
+            json_encode($rootData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+        );
     }
 
     public function deactivate(Composer $composer, IOInterface $io): void
