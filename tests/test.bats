@@ -359,3 +359,21 @@ PY
     [ "${core_sha}" = "${overlay_sha}" ]
   fi
 }
+
+@test "config-platform" {
+  set -eu -o pipefail
+  addon_setup
+
+  # The plugin must sync config.platform from composer.json into composer.local.json
+  # so that tools like PHPStan, which read the root composer file directly, pick
+  # up the correct platform PHP version instead of falling back to the runtime.
+  core_platform=$(python3 -c "import json; print(json.load(open('${TESTDIR}/composer.json'))['config']['platform']['php'])")
+  overlay_platform=$(python3 -c "import json; print(json.load(open('${TESTDIR}/composer.local.json'))['config']['platform']['php'])")
+  [ "${core_platform}" = "${overlay_platform}" ]
+
+  # PHPStan must report the platform version, not the runtime version.
+  # -vvv emits "PHP version for analysis: X.Y (from config.platform.php in composer.json)"
+  run ddev exec vendor/bin/phpstan -vvv analyze --configuration=core/phpstan.neon.dist -- core/lib/Drupal/Core/Entity/EntityInterface.php
+  assert_success
+  assert_output --partial "from config.platform.php"
+}
